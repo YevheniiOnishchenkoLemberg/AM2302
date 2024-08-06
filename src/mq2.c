@@ -2,6 +2,7 @@
 #include <linux/kernel.h>
 #include <linux/module.h>
 #include <linux/cdev.h>
+#include <linux/device.h>
 
 #define DRIVER_MAJOR 42
 #define DRIVER_MAX_MINOR 1
@@ -13,6 +14,9 @@ struct device_data {
 static struct file_operations mq2_gas_sensor_ops;
 struct device_data devs[1];
 struct cdev *mq2_cdev;
+
+static struct device *mq2_device;
+static struct class *mq2_class;
 
 static int mq2_open(struct inode *inode, struct file *file)
 {
@@ -44,6 +48,10 @@ static int __init mq2_init(void)
     mq2_cdev->ops = &mq2_gas_sensor_ops;
     err = cdev_add(mq2_cdev, MKDEV(DRIVER_MAJOR, 0), DRIVER_MAX_MINOR);
 
+    // create device in /dev
+    mq2_class = class_create(THIS_MODULE, "mq2_gas_sensor");
+    mq2_device = device_create(mq2_class, NULL, MKDEV(DRIVER_MAJOR, 0), NULL, "mq2");
+
     return err;
 }
 module_init(mq2_init);
@@ -51,6 +59,8 @@ module_init(mq2_init);
 static void __exit mq2_exit(void)
 {
     cdev_del(mq2_cdev);
+    device_destroy(mq2_class, MKDEV(DRIVER_MAJOR, 0));
+	class_destroy(mq2_class);
     unregister_chrdev_region(MKDEV(DRIVER_MAJOR, 0), DRIVER_MAX_MINOR);
 }
 module_exit(mq2_exit);
