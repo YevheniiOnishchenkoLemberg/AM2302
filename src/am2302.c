@@ -52,20 +52,10 @@ static int detect_signal_from_device_with_timeout(int gpio, bool expected_signal
     return -1;
 }
 
-static int am2302_open(struct inode *inode, struct file *file)
-{
-    printk(KERN_INFO "[AM2302]: Opening AM2302...\n");
-    // Data-bus's free status is high voltage level
-    gpio_set_value(GPIO_DO, 1);
-    return 0;
-}
-
-static int am2302_read(struct file *file, char __user *user_buffer, size_t size, loff_t *offset)
+static int am2302_init_communication(void)
 {
     int value;
-    printk(KERN_INFO "[AM2302]: Reading from AM2302...\n");
-
-
+    
     /* 
         Communication between MCU and AM2302 begins. MCU will
         pull low data-bus and this process must beyond at least 1~10ms 
@@ -90,6 +80,7 @@ static int am2302_read(struct file *file, char __user *user_buffer, size_t size,
     if (value != 0)
     {
         pr_err("[AM2302]: No LOW signal detected from device");
+        return -EFAULT;
     }
     usleep_range(80, 80);
 
@@ -100,9 +91,31 @@ static int am2302_read(struct file *file, char __user *user_buffer, size_t size,
     if (value != 1)
     {
         pr_err("[AM2302]: No HIGH signal detected from device");
+        return -EFAULT;
     }
     usleep_range(80, 80);
 
+    return 0;
+}
+
+static int am2302_open(struct inode *inode, struct file *file)
+{
+    printk(KERN_INFO "[AM2302]: Opening AM2302...\n");
+    // Data-bus's free status is high voltage level
+    gpio_set_value(GPIO_DO, 1);
+    return 0;
+}
+
+static int am2302_read(struct file *file, char __user *user_buffer, size_t size, loff_t *offset)
+{
+    int value;
+    printk(KERN_INFO "[AM2302]: Reading from AM2302...\n");
+
+    if(am2302_init_communication())
+    {
+        pr_err("[AM2302]: Couldn't communicate with the device");
+        return -EFAULT;
+    }
     /*
         When AM2302 is sending data to MCU, every bit's transmission begin with low-voltage-level that last 50us, the
         following high-voltage-level signal's length decide the bit is "1" (70us) or "0" (26-28us)
