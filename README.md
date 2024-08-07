@@ -1,1 +1,1 @@
-# MQ-2_driver
+# AM2302 driver
