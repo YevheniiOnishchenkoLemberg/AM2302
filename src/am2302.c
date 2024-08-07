@@ -11,6 +11,8 @@
 #define DRIVER_MAX_MINOR 1
 #define HIGH 1
 #define LOW 0
+#define DATA_MASK_HIGH 0x1
+#define DATA_MASK_LOW 0x0
 
 //GPIO digital output
 #define GPIO_DO 11
@@ -30,26 +32,22 @@ static struct class *am2302_class;
 
 static int detect_signal_from_device_with_timeout(bool expected_signal_state, int timeout_ns)
 {
-    int detected_signal;
+    int detected_signal_state;
     u64 start_time;
     u64 current_time;
 
     start_time = ktime_get();
-    pr_debug("[AM2302]: start_time %llu\n", start_time);
 
     do
     {
-        detected_signal = gpio_get_value(GPIO_DO);
-        if(detected_signal == expected_signal_state)
+        detected_signal_state = gpio_get_value(GPIO_DO);
+        if(detected_signal_state == expected_signal_state)
         {
-            return detected_signal;
+            return detected_signal_state;
         }
         current_time = ktime_get();
-        pr_debug("[AM2302]: current_time in loop %llu\n", current_time);
     }
     while(ktime_sub(current_time, start_time) <= timeout_ns);
-
-    pr_debug("[AM2302]: current_time last %llu\n", current_time);
 
     return -1;
 }
@@ -64,52 +62,143 @@ static int am2302_init_communication(void)
         to ensure AM2302 could detect MCU's signal
     */
     gpio_set_value(GPIO_DO, LOW);
-    msleep(1);
+    usleep_range(1000, 2000);
 
     /*
         MCU will pulls up and wait 20-40us for AM2302's response
     */
     gpio_set_value(GPIO_DO, HIGH);
-    
-    // Use range function according to https://docs.kernel.org/timers/timers-howto.html
-    usleep_range(20, 40);
+    gpio_direction_input(GPIO_DO);
+    value = detect_signal_from_device_with_timeout(LOW, 40000);
+    if (value != LOW)
+    {
+        pr_err("[AM2302]: No LOW signal detected from device during init communication");
+        return -EFAULT;
+    }
 
     /*
         When AM2302 detect the start signal, AM2302 will pull low the bus 80us as response signal
     */
-    gpio_direction_input(GPIO_DO);
-    value = detect_signal_from_device_with_timeout(LOW, 20000);
-    if (value != LOW)
-    {
-        pr_err("[AM2302]: No LOW signal detected from device");
-        return -EFAULT;
-    }
-    usleep_range(80, 80);
+    value = detect_signal_from_device_with_timeout(HIGH, 80000);
 
     /*
         AM2302 pulls up 80us for preparation to send data
     */
-    value = gpio_get_value(GPIO_DO);
     if (value != HIGH)
     {
         pr_err("[AM2302]: No HIGH signal detected from device");
         return -EFAULT;
     }
-    usleep_range(80, 80);
+    
+    // Let's sleep less, and then wait for LOW state during data reading
+    usleep_range(50, 50);
 
     return 0;
 }
 
+static int am2302_format_data(u64 data)
+{
+    // We'll drop numbers after coma
+    int humidity, temperature, checksum;
+    int calculated_checksum;
+    bool temperature_sign;
+
+    pr_info("[AM2302]: Data: %llu\n", data & 0xffffffffff);
+
+    humidity = ((data & 0xffff000000) >> 24);
+    temperature_sign = ((data & 0x800000) >> 23);
+    temperature = ((data & 0x7fff00) >> 8);
+    if(temperature_sign)
+    {
+        temperature = -temperature;
+    }
+    
+    checksum = data & 0xff;
+    calculated_checksum = (humidity & 0xff) + ((humidity >> 8) & 0xff) + (temperature & 0xff) + ((temperature >> 8) & 0xff);
+    calculated_checksum = calculated_checksum & 0xff;
+
+    if(checksum != calculated_checksum)
+    {
+        pr_err("[AM2302]: Checksum mismatch: %d - %d\n", checksum, calculated_checksum);
+    }
+
+    pr_info("[AM2302]: Humidity: %d\n", humidity/10);
+    pr_info("[AM2302]: Temperature: %d\n", temperature/10);
+
+    return 0;
+}
+
+static int detect_signal_from_device_and_get_duration(bool expected_signal_state, int timeout_ns)
+{
+    int detected_signal_state;
+    u64 start_time;
+    u64 current_time;
+
+    start_time = ktime_get();
+    current_time = ktime_get();
+    detected_signal_state = gpio_get_value(GPIO_DO);
+    while(detected_signal_state != expected_signal_state)
+    {
+        detected_signal_state = gpio_get_value(GPIO_DO);
+        current_time = ktime_get();
+
+        if(ktime_sub(current_time, start_time) > timeout_ns)
+        {
+            return -1;
+        }
+    }
+    
+    return ktime_sub(current_time, start_time);
+}
+
 static int am2302_get_data_from_device(void)
 {
+    
     int value;
-    uint8_t data[40];
+    u64 data = 0;
 
     /*
         When AM2302 is sending data to MCU, every bit's transmission begin with low-voltage-level that last 50us, the
         following high-voltage-level signal's length decide the bit is "1" (70us) or "0" (26-28us)
     */
 
+   // Wait some time for LOW state here as we had waited less in init function
+   value = detect_signal_from_device_with_timeout(LOW, 30000);
+
+    // 16 bit for humidity, 16 for temperature and 8 for checksum
+    for(int i=0; i<40; ++i)
+    {
+        if(value == -1)
+        {
+            pr_err("[AM2302]: No LOW signal detected from device during data reading, iter: %d", i);
+            return -EFAULT;
+        }
+
+        // Wait for 50us to get HIGH state as a confirmation of bit transmission start
+        // We'll wait more, as practical experiments show the value can be much bigger
+        value = detect_signal_from_device_with_timeout(HIGH, 80000);
+
+        if(value == -1)
+        {
+            pr_err("[AM2302]: No HIGH signal detected from device during data reading, iter: %d", i);
+            return -EFAULT;
+        }
+
+        value = detect_signal_from_device_and_get_duration(LOW, 90000);
+
+        if(value > 40000)
+        {
+            data = ((data | DATA_MASK_HIGH) << 1);
+        }
+        else
+        {
+            data = ((data | DATA_MASK_LOW) << 1);
+        }
+    }
+
+    data = data >> 1;
+
+    value = am2302_format_data(data);
     return value;
 }
 
@@ -129,20 +218,20 @@ static int am2302_read(struct file *file, char __user *user_buffer, size_t size,
     if(am2302_init_communication())
     {
         pr_err("[AM2302]: Couldn't communicate with the device");
-        return -EFAULT;
+        return 0;
     }
 
     value = am2302_get_data_from_device();
     if(value == -EFAULT)
     {
         pr_err("[AM2302]: Couldn't get data from the device");
-        return -EFAULT;
+        return 0;
     }
 
     if(copy_to_user(user_buffer, &value, sizeof(value)))
     {
         pr_err("[AM2302]: Couldn't send info to user");
-        return -EFAULT;
+        return 0;
     }
 
     return 0;
@@ -151,7 +240,7 @@ static int am2302_read(struct file *file, char __user *user_buffer, size_t size,
 static int am2302_release(struct inode *, struct file *)
 {
     printk(KERN_INFO "[AM2302]: Releasing AM2302...\n");
-    gpio_direction_output(GPIO_DO, LOW);
+    gpio_direction_output(GPIO_DO, HIGH);
     return 0;
 }
 
@@ -173,8 +262,7 @@ static int __init am2302_init(void)
         return -1;
     }
 
-    gpio_direction_output(GPIO_DO, LOW);
-    gpio_set_value(GPIO_DO, HIGH);
+    gpio_direction_output(GPIO_DO, HIGH);
 
     printk(KERN_INFO "[AM2302]: Initializing AM2302\n");
     err = alloc_chrdev_region(&dev, 0, DRIVER_MAX_MINOR, "am2302_sensor");
