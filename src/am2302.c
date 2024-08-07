@@ -9,6 +9,8 @@
 
 #define DRIVER_MAJOR 42
 #define DRIVER_MAX_MINOR 1
+#define HIGH 1
+#define LOW 0
 
 //GPIO digital output
 #define GPIO_DO 11
@@ -26,7 +28,7 @@ struct cdev *am2302_cdev;
 static struct device *am2302_device;
 static struct class *am2302_class;
 
-static int detect_signal_from_device_with_timeout(int gpio, bool expected_signal_state, int timeout_us)
+static int detect_signal_from_device_with_timeout(bool expected_signal_state, int timeout_ns)
 {
     int detected_signal;
     u64 start_time;
@@ -37,7 +39,7 @@ static int detect_signal_from_device_with_timeout(int gpio, bool expected_signal
 
     do
     {
-        detected_signal = gpio_get_value(gpio);
+        detected_signal = gpio_get_value(GPIO_DO);
         if(detected_signal == expected_signal_state)
         {
             return detected_signal;
@@ -45,7 +47,7 @@ static int detect_signal_from_device_with_timeout(int gpio, bool expected_signal
         current_time = ktime_get();
         pr_debug("[AM2302]: current_time in loop %llu\n", current_time);
     }
-    while(ktime_sub(current_time, start_time) <= timeout_us);
+    while(ktime_sub(current_time, start_time) <= timeout_ns);
 
     pr_debug("[AM2302]: current_time last %llu\n", current_time);
 
@@ -61,13 +63,13 @@ static int am2302_init_communication(void)
         pull low data-bus and this process must beyond at least 1~10ms 
         to ensure AM2302 could detect MCU's signal
     */
-    gpio_set_value(GPIO_DO, 0);
+    gpio_set_value(GPIO_DO, LOW);
     msleep(1);
 
     /*
         MCU will pulls up and wait 20-40us for AM2302's response
     */
-    gpio_set_value(GPIO_DO, 1);
+    gpio_set_value(GPIO_DO, HIGH);
     
     // Use range function according to https://docs.kernel.org/timers/timers-howto.html
     usleep_range(20, 40);
@@ -76,8 +78,8 @@ static int am2302_init_communication(void)
         When AM2302 detect the start signal, AM2302 will pull low the bus 80us as response signal
     */
     gpio_direction_input(GPIO_DO);
-    value = detect_signal_from_device_with_timeout(GPIO_DO, 0, 20000);
-    if (value != 0)
+    value = detect_signal_from_device_with_timeout(LOW, 20000);
+    if (value != LOW)
     {
         pr_err("[AM2302]: No LOW signal detected from device");
         return -EFAULT;
@@ -88,7 +90,7 @@ static int am2302_init_communication(void)
         AM2302 pulls up 80us for preparation to send data
     */
     value = gpio_get_value(GPIO_DO);
-    if (value != 1)
+    if (value != HIGH)
     {
         pr_err("[AM2302]: No HIGH signal detected from device");
         return -EFAULT;
@@ -100,7 +102,8 @@ static int am2302_init_communication(void)
 
 static int am2302_get_data_from_device(void)
 {
-    int value = 0;
+    int value;
+    uint8_t data[40];
 
     /*
         When AM2302 is sending data to MCU, every bit's transmission begin with low-voltage-level that last 50us, the
@@ -114,7 +117,7 @@ static int am2302_open(struct inode *inode, struct file *file)
 {
     printk(KERN_INFO "[AM2302]: Opening AM2302...\n");
     // Data-bus's free status is high voltage level
-    gpio_set_value(GPIO_DO, 1);
+    gpio_set_value(GPIO_DO, HIGH);
     return 0;
 }
 
@@ -148,7 +151,7 @@ static int am2302_read(struct file *file, char __user *user_buffer, size_t size,
 static int am2302_release(struct inode *, struct file *)
 {
     printk(KERN_INFO "[AM2302]: Releasing AM2302...\n");
-    gpio_direction_output(GPIO_DO, 0);
+    gpio_direction_output(GPIO_DO, LOW);
     return 0;
 }
 
@@ -170,8 +173,8 @@ static int __init am2302_init(void)
         return -1;
     }
 
-    gpio_direction_output(GPIO_DO, 0);
-    gpio_set_value(GPIO_DO, 1);
+    gpio_direction_output(GPIO_DO, LOW);
+    gpio_set_value(GPIO_DO, HIGH);
 
     printk(KERN_INFO "[AM2302]: Initializing AM2302\n");
     err = alloc_chrdev_region(&dev, 0, DRIVER_MAX_MINOR, "am2302_sensor");
@@ -200,7 +203,7 @@ static void __exit am2302_exit(void)
 	class_destroy(am2302_class);
     unregister_chrdev_region(MKDEV(DRIVER_MAJOR, 0), DRIVER_MAX_MINOR);
 
-    gpio_set_value(GPIO_DO, 0);
+    gpio_set_value(GPIO_DO, LOW);
     gpio_free(GPIO_DO);
 }
 module_exit(am2302_exit);
