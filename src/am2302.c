@@ -98,6 +98,18 @@ static int am2302_init_communication(void)
     return 0;
 }
 
+static int am2302_get_data_from_device(void)
+{
+    int value = 0;
+
+    /*
+        When AM2302 is sending data to MCU, every bit's transmission begin with low-voltage-level that last 50us, the
+        following high-voltage-level signal's length decide the bit is "1" (70us) or "0" (26-28us)
+    */
+
+    return value;
+}
+
 static int am2302_open(struct inode *inode, struct file *file)
 {
     printk(KERN_INFO "[AM2302]: Opening AM2302...\n");
@@ -116,10 +128,13 @@ static int am2302_read(struct file *file, char __user *user_buffer, size_t size,
         pr_err("[AM2302]: Couldn't communicate with the device");
         return -EFAULT;
     }
-    /*
-        When AM2302 is sending data to MCU, every bit's transmission begin with low-voltage-level that last 50us, the
-        following high-voltage-level signal's length decide the bit is "1" (70us) or "0" (26-28us)
-    */
+
+    value = am2302_get_data_from_device();
+    if(value == -EFAULT)
+    {
+        pr_err("[AM2302]: Couldn't get data from the device");
+        return -EFAULT;
+    }
 
     if(copy_to_user(user_buffer, &value, sizeof(value)))
     {
@@ -133,6 +148,7 @@ static int am2302_read(struct file *file, char __user *user_buffer, size_t size,
 static int am2302_release(struct inode *, struct file *)
 {
     printk(KERN_INFO "[AM2302]: Releasing AM2302...\n");
+    gpio_direction_output(GPIO_DO, 0);
     return 0;
 }
 
