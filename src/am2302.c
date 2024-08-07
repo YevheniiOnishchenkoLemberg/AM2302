@@ -6,6 +6,7 @@
 #include <linux/gpio.h>
 #include <linux/delay.h>
 #include <linux/timekeeping.h>
+#include <linux/slab.h>
 
 #define DRIVER_MAJOR 42
 #define DRIVER_MAX_MINOR 1
@@ -96,14 +97,14 @@ static int am2302_init_communication(void)
     return 0;
 }
 
-static int am2302_format_data(u64 data)
+static void am2302_format_data(u64 data)
 {
     // We'll drop numbers after coma
     int humidity, temperature, checksum;
     int calculated_checksum;
     bool temperature_sign;
 
-    pr_info("[AM2302]: Data: %llu\n", data & 0xffffffffff);
+    pr_debug("[AM2302]: Data: %llu\n", data & 0xffffffffff);
 
     humidity = ((data & 0xffff000000) >> 24);
     temperature_sign = ((data & 0x800000) >> 23);
@@ -112,7 +113,7 @@ static int am2302_format_data(u64 data)
     {
         temperature = -temperature;
     }
-    
+
     checksum = data & 0xff;
     calculated_checksum = (humidity & 0xff) + ((humidity >> 8) & 0xff) + (temperature & 0xff) + ((temperature >> 8) & 0xff);
     calculated_checksum = calculated_checksum & 0xff;
@@ -124,8 +125,6 @@ static int am2302_format_data(u64 data)
 
     pr_info("[AM2302]: Humidity: %d\n", humidity/10);
     pr_info("[AM2302]: Temperature: %d\n", temperature/10);
-
-    return 0;
 }
 
 static int detect_signal_from_device_and_get_duration(bool expected_signal_state, int timeout_ns)
@@ -198,13 +197,14 @@ static int am2302_get_data_from_device(void)
 
     data = data >> 1;
 
-    value = am2302_format_data(data);
-    return value;
+    am2302_format_data(data);
+    
+    return 0;
 }
 
 static int am2302_open(struct inode *inode, struct file *file)
 {
-    printk(KERN_INFO "[AM2302]: Opening AM2302...\n");
+    pr_debug("[AM2302]: Opening AM2302...\n");
     // Data-bus's free status is high voltage level
     gpio_set_value(GPIO_DO, HIGH);
     return 0;
@@ -213,7 +213,7 @@ static int am2302_open(struct inode *inode, struct file *file)
 static int am2302_read(struct file *file, char __user *user_buffer, size_t size, loff_t *offset)
 {
     int value;
-    printk(KERN_INFO "[AM2302]: Reading from AM2302...\n");
+    pr_debug("[AM2302]: Reading from AM2302...\n");
 
     if(am2302_init_communication())
     {
@@ -228,18 +228,18 @@ static int am2302_read(struct file *file, char __user *user_buffer, size_t size,
         return 0;
     }
 
-    if(copy_to_user(user_buffer, &value, sizeof(value)))
-    {
-        pr_err("[AM2302]: Couldn't send info to user");
-        return 0;
-    }
-
+    // if(copy_to_user(user_buffer, &value, sizeof(value)))
+    // {
+    //     pr_err("[AM2302]: Couldn't send info to user");
+    //     return 0;
+    // }
+    
     return 0;
 }
 
 static int am2302_release(struct inode *, struct file *)
 {
-    printk(KERN_INFO "[AM2302]: Releasing AM2302...\n");
+    pr_debug("[AM2302]: Releasing AM2302...\n");
     gpio_direction_output(GPIO_DO, HIGH);
     return 0;
 }
