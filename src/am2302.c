@@ -30,6 +30,7 @@ struct cdev *am2302_cdev;
 
 static struct device *am2302_device;
 static struct class *am2302_class;
+static int dev_major;
 
 static int detect_signal_from_device_with_timeout(bool expected_signal_state, int timeout_ns)
 {
@@ -247,7 +248,7 @@ static int am2302_release(struct inode *, struct file *)
 static int __init am2302_init(void)
 {
     int err;
-    dev_t dev = MKDEV(DRIVER_MAJOR, 0);
+    dev_t dev;
 
     if (!gpio_is_valid(GPIO_DO))
     {
@@ -266,6 +267,7 @@ static int __init am2302_init(void)
 
     printk(KERN_INFO "[AM2302]: Initializing AM2302\n");
     err = alloc_chrdev_region(&dev, 0, DRIVER_MAX_MINOR, "am2302_sensor");
+    dev_major = MAJOR(dev);
     if (err != 0) {
         return err;
     }
@@ -286,10 +288,10 @@ module_init(am2302_init);
 
 static void __exit am2302_exit(void)
 {
-    cdev_del(am2302_cdev);
     device_destroy(am2302_class, MKDEV(DRIVER_MAJOR, 0));
 	class_destroy(am2302_class);
-    unregister_chrdev_region(MKDEV(DRIVER_MAJOR, 0), DRIVER_MAX_MINOR);
+    cdev_del(am2302_cdev);
+    unregister_chrdev_region(MKDEV(dev_major, 0), DRIVER_MAX_MINOR);
 
     gpio_set_value(GPIO_DO, LOW);
     gpio_free(GPIO_DO);
