@@ -5,6 +5,7 @@
 #include <linux/device.h>
 #include <linux/gpio.h>
 #include <linux/delay.h>
+#include <linux/timekeeping.h>
 
 #define DRIVER_MAJOR 42
 #define DRIVER_MAX_MINOR 1
@@ -25,6 +26,32 @@ struct cdev *am2302_cdev;
 static struct device *am2302_device;
 static struct class *am2302_class;
 
+static int detect_signal_from_device_with_timeout(int gpio, bool expected_signal_state, int timeout_us)
+{
+    int detected_signal;
+    u64 start_time;
+    u64 current_time;
+
+    start_time = ktime_get();
+    pr_debug("[AM2302]: start_time %llu\n", start_time);
+
+    do
+    {
+        detected_signal = gpio_get_value(gpio);
+        if(detected_signal == expected_signal_state)
+        {
+            return detected_signal;
+        }
+        current_time = ktime_get();
+        pr_debug("[AM2302]: current_time in loop %llu\n", current_time);
+    }
+    while(ktime_sub(current_time, start_time) <= timeout_us);
+
+    pr_debug("[AM2302]: current_time last %llu\n", current_time);
+
+    return -1;
+}
+
 static int am2302_open(struct inode *inode, struct file *file)
 {
     printk(KERN_INFO "[AM2302]: Opening AM2302...\n");
@@ -44,27 +71,43 @@ static int am2302_read(struct file *file, char __user *user_buffer, size_t size,
         pull low data-bus and this process must beyond at least 1~10ms 
         to ensure AM2302 could detect MCU's signal
     */
+    gpio_set_value(GPIO_DO, 0);
+    msleep(1);
 
-    
     /*
         MCU will pulls up and wait 20-40us for AM2302's response
     */
+    gpio_set_value(GPIO_DO, 1);
+    
+    // Use range function according to https://docs.kernel.org/timers/timers-howto.html
+    usleep_range(20, 40);
 
     /*
         When AM2302 detect the start signal, AM2302 will pull low the bus 80us as response signal
     */
+    gpio_direction_input(GPIO_DO);
+    value = detect_signal_from_device_with_timeout(GPIO_DO, 0, 20000);
+    if (value != 0)
+    {
+        pr_err("[AM2302]: No LOW signal detected from device");
+    }
+    usleep_range(80, 80);
 
     /*
         AM2302 pulls up 80us for preparation to send data
     */
+    value = gpio_get_value(GPIO_DO);
+    if (value != 1)
+    {
+        pr_err("[AM2302]: No HIGH signal detected from device");
+    }
+    usleep_range(80, 80);
 
     /*
         When AM2302 is sending data to MCU, every bit's transmission begin with low-voltage-level that last 50us, the
         following high-voltage-level signal's length decide the bit is "1" (70us) or "0" (26-28us)
     */
 
-    value = gpio_get_value(GPIO_DO);
-    pr_info("gpio_get_value(GPIO_DO) %d\n", gpio_get_value(GPIO_DO));
     if(copy_to_user(user_buffer, &value, sizeof(value)))
     {
         pr_err("[AM2302]: Couldn't send info to user");
