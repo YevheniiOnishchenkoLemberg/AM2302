@@ -307,6 +307,6 @@ static struct file_operations am2302_sensor_ops = {
 	.release =   am2302_release
 };
 
-MODULE_DESCRIPTION("AM2302 Gas Sensor driver");
+MODULE_DESCRIPTION("AM2302 Temperature and Humidity Sensor driver");
 MODULE_LICENSE("GPL v2");
 MODULE_AUTHOR("Yevhenii Onishchenko");

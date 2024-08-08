@@ -1,0 +1,15 @@
+/dts-v1/;
+/plugin/;
+
+/ {
+	fragment@0 {
+		target-path = "/";
+		__overlay__ {
+			am2302 {
+				compatible = "aosong,am2302";
+				gpio_do = <11>;
+				status = "okay";
+			};
+		};
+	};
+};
