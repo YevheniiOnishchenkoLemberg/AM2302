@@ -21,20 +21,15 @@
 #define DATA_MASK_HIGH 0x1
 #define DATA_MASK_LOW 0x0
 
-//GPIO digital output
-#define GPIO_DO 11
-
 struct device_data {
-    struct cdev cdev;
-    char *buffer;
-    int buffer_len;
+    unsigned gpio_do;
 };
 
 /* Declate the probe and remove functions */
 static int am2302_probe(struct platform_device *pdev);
 static int am2302_remove(struct platform_device *pdev);
 static struct file_operations am2302_sensor_ops;
-struct device_data devs[1];
+struct device_data dev_data;
 struct cdev *am2302_cdev;
 
 static struct device *am2302_device;
@@ -51,7 +46,7 @@ static int detect_signal_from_device_with_timeout(bool expected_signal_state, in
 
     do
     {
-        detected_signal_state = gpio_get_value(GPIO_DO);
+        detected_signal_state = gpio_get_value(dev_data.gpio_do);
         if(detected_signal_state == expected_signal_state)
         {
             return detected_signal_state;
@@ -72,14 +67,14 @@ static int am2302_init_communication(void)
         pull low data-bus and this process must beyond at least 1~10ms 
         to ensure AM2302 could detect MCU's signal
     */
-    gpio_set_value(GPIO_DO, LOW);
+    gpio_set_value(dev_data.gpio_do, LOW);
     usleep_range(1000, 2000);
 
     /*
         MCU will pulls up and wait 20-40us for AM2302's response
     */
-    gpio_set_value(GPIO_DO, HIGH);
-    gpio_direction_input(GPIO_DO);
+    gpio_set_value(dev_data.gpio_do, HIGH);
+    gpio_direction_input(dev_data.gpio_do);
     value = detect_signal_from_device_with_timeout(LOW, 40000);
     if (value != LOW)
     {
@@ -145,10 +140,10 @@ static int detect_signal_from_device_and_get_duration(bool expected_signal_state
 
     start_time = ktime_get();
     current_time = ktime_get();
-    detected_signal_state = gpio_get_value(GPIO_DO);
+    detected_signal_state = gpio_get_value(dev_data.gpio_do);
     while(detected_signal_state != expected_signal_state)
     {
-        detected_signal_state = gpio_get_value(GPIO_DO);
+        detected_signal_state = gpio_get_value(dev_data.gpio_do);
         current_time = ktime_get();
 
         if(ktime_sub(current_time, start_time) > timeout_ns)
@@ -216,7 +211,7 @@ static int am2302_open(struct inode *inode, struct file *file)
 {
     pr_debug("[AM2302]: Opening AM2302...\n");
     // Data-bus's free status is high voltage level
-    gpio_set_value(GPIO_DO, HIGH);
+    gpio_set_value(dev_data.gpio_do, HIGH);
     return 0;
 }
 
@@ -250,7 +245,7 @@ static int am2302_read(struct file *file, char __user *user_buffer, size_t size,
 static int am2302_release(struct inode *, struct file *)
 {
     pr_debug("[AM2302]: Releasing AM2302...\n");
-    gpio_direction_output(GPIO_DO, HIGH);
+    gpio_direction_output((int)dev_data.gpio_do, HIGH);
     return 0;
 }
 
@@ -290,47 +285,53 @@ static struct platform_driver am2302_driver = {
 static int am2302_probe(struct platform_device *pdev) {
 	struct device *dev = &pdev->dev;
 	int gpio_do, ret;
-	int err;
     dev_t devm;
 
 	/* Check for device properties */
 	if(!device_property_present(dev, "gpio_do")) {
-		printk("[AM2302]: Device property 'gpio_do' not found!\n");
+		pr_err("[AM2302]: Device property 'gpio_do' not found!\n");
 		return -1;
 	}
 
 	/* Read device properties */
 	ret = device_property_read_u32(dev, "gpio_do", &gpio_do);
 	if(ret) {
-		printk("[AM2302]: Could not read 'gpio_do'\n");
+		pr_err("[AM2302]: Could not read 'gpio_do'\n");
 		return -1;
 	}
 
-    if (!gpio_is_valid(gpio_do))
+	dev_data.gpio_do = gpio_do;
+
+    if (!gpio_is_valid(dev_data.gpio_do))
     {
-        pr_err("[AM2302]: GPIO %d is not valid\n", gpio_do);
+        pr_err("[AM2302]: GPIO %d is not valid\n", dev_data.gpio_do);
         return -1;
     }
 
-    if (gpio_request(gpio_do, "gpio_do") < 0)
+    if (gpio_request(dev_data.gpio_do, "gpio_do") < 0)
     {
-        pr_err("[AM2302]: ERROR: GPIO %d request\n", gpio_do);
-        gpio_free(gpio_do);
+        pr_err("[AM2302]: ERROR: GPIO %d request\n", dev_data.gpio_do);
+        gpio_free(dev_data.gpio_do);
         return -1;
     }
 
-    gpio_direction_output(GPIO_DO, HIGH);
+    gpio_direction_output(dev_data.gpio_do, HIGH);
 
-    printk(KERN_INFO "[AM2302]: Initializing AM2302\n");
-    err = alloc_chrdev_region(&devm, 0, DRIVER_MAX_MINOR, "am2302_sensor");
+    ret = alloc_chrdev_region(&devm, 0, DRIVER_MAX_MINOR, "am2302_sensor");
     dev_major = MAJOR(devm);
-    if (err != 0) {
-        return err;
+    if (ret) {
+		pr_err("[AM2302]: Couldn't allocate char dev region\n");
+        return -1;
     }
 
     am2302_cdev = cdev_alloc();
     am2302_cdev->ops = &am2302_sensor_ops;
-    err = cdev_add(am2302_cdev, MKDEV(DRIVER_MAJOR, 0), DRIVER_MAX_MINOR);
+    ret = cdev_add(am2302_cdev, MKDEV(DRIVER_MAJOR, 0), DRIVER_MAX_MINOR);
+	if(ret)
+	{
+		pr_err("[AM2302]: Couldn't add char dev\n");
+		return -1;
+	}
 
     // create device in /dev
     am2302_class = class_create(THIS_MODULE, "am2302_sensor");
@@ -338,32 +339,29 @@ static int am2302_probe(struct platform_device *pdev) {
 
     printk(KERN_INFO "[AM2302]: GPIO initialized\n");
 
-    return err;
+    return 0;
 }
 
 static int am2302_remove(struct platform_device *pdev) {
-	printk("dt_probe - Now I am in the remove function\n");
 	device_destroy(am2302_class, MKDEV(DRIVER_MAJOR, 0));
 	class_destroy(am2302_class);
     cdev_del(am2302_cdev);
     unregister_chrdev_region(MKDEV(dev_major, 0), DRIVER_MAX_MINOR);
 
-    gpio_set_value(GPIO_DO, LOW);
-    gpio_free(GPIO_DO);
+    gpio_set_value(dev_data.gpio_do, LOW);
+    gpio_free(dev_data.gpio_do);
 	return 0;
 }
 
 static int __init am2302_init(void) {
-	printk("dt_probe - Loading the driver...\n");
 	if(platform_driver_register(&am2302_driver)) {
-		printk("dt_probe - Error! Could not load driver\n");
+		pr_err("[AM2302]: Could not load driver\n");
 		return -1;
 	}
 	return 0;
 }
 
 static void __exit am2302_exit(void) {
-	printk("dt_probe - Unload driver");
 	platform_driver_unregister(&am2302_driver);
 }
 
