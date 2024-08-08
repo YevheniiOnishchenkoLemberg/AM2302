@@ -6,7 +6,6 @@ Driver written in C language in 2 options:
 ---
 ## How to compile
 Require make, gcc and dtc. Define `CROSS_COMPILE` and `KDIR` variables for cross-compilation.
-- Type `source environment.env` to export needed variables.
 - Type `make` to build kernel objects (*.ko).
 - Type `make clean` to clean the project.
 
