@@ -6,3 +6,4 @@
 *.order
 *.o
 *.env
+*.dtbo
