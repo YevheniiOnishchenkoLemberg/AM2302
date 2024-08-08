@@ -5,7 +5,7 @@ all:
 	bash -c "source environment.env"
 	make -C ${KDIR} ARCH=mips CROSS_COMPILE=${CROSS_COMPILE} M=$(PWD) modules
 ifeq ($(CONFIG_CHAR_PLATFORM_DRIVER), m)
-	dtc -@ -O dtb -o src/am2302_platform.dtbo src/am2302_platform.dts
+	dtc -@ -O dtb -o dts/am2302_platform.dtbo dts/am2302_platform.dts
 endif
 
 clean:
