@@ -1,15 +1,14 @@
 # AM2302 Linux driver
-Driver written in C language in 2 options: 
-* am2302_char_driver can work as a regular character driver without any compatibility checks.
-* am2302_platform_char_driver works as a regular character driver but should be described in DTS. The DTS overlay is compiled during the build.
+Driver written in C language for AM2302 temperature and humidity sersor.
+* am2302_platform_char_driver works as a regular character driver and should be described in DTS. The DTS overlay is compiled during the build. DTS overlay example is located in src/dts directory.
 
 ---
 ## How to compile
 Require make, gcc and dtc. Define `CROSS_COMPILE` and `KDIR` variables for cross-compilation.
+- Set your environmental variables in *environment.env* file.
+- Type `source ./environment.env` to export them
 - Type `make` to build kernel objects (*.ko).
 - Type `make clean` to clean the project.
-
-*Note: you can choose what driver to compile in environment.env file by commenting out/uncommenting lines*
 
 ---
 ## How to use
@@ -25,7 +24,7 @@ Get the data about temperature and humidity:
 
 Example output:
 
-![Example_output](example_output.png)
+![Example_output](img/example_output.png)
 
 ---
 ## Send data to ssd1306 display

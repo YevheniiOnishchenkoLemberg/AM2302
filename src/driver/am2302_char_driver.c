@@ -307,8 +307,6 @@ static void __exit am2302_exit(void)
 }
 module_exit(am2302_exit);
 
-MODULE_DEVICE_TABLE(of, am2302_sensor_match);
-
 static struct file_operations am2302_sensor_ops = {
     .owner =     THIS_MODULE,
 	.read =	     am2302_read,
