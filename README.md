@@ -26,3 +26,18 @@ Get the data about temperature and humidity:
 Example output:
 
 ![Example_output](example_output.png)
+
+---
+## Send data to ssd1306 display
+Connect ssd1206 display to your linux-based device.
+Clone and build binary file driver for the display from:
+- https://github.com/armlabs/ssd1306_linux/tree/master
+
+*Note: don't forget about cross-compile stuff if you need it*
+
+Copy the driver to your device. Copy display_data_from_driver.sh bash script to the device.
+Give execute permission to the script:
+`chmod +x <path-to-the-script>`
+
+Run the script:
+`<path-to-the-script>`
