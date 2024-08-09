@@ -20,6 +20,7 @@
 #define LOW 0
 #define DATA_MASK_HIGH 0x1
 #define DATA_MASK_LOW 0x0
+#define BUFFER_SIZE 80
 
 struct device_data {
     unsigned gpio_do;
@@ -102,7 +103,7 @@ static int am2302_init_communication(void)
     return 0;
 }
 
-static void am2302_format_data(u64 data)
+static void am2302_format_data(u64 data, char* buffer)
 {
     // We'll drop numbers after coma
     int humidity, temperature, checksum;
@@ -128,8 +129,7 @@ static void am2302_format_data(u64 data)
         pr_err("[AM2302]: Checksum mismatch: %d - %d\n", checksum, calculated_checksum);
     }
 
-    pr_info("[AM2302]: Humidity: %d\n", humidity/10);
-    pr_info("[AM2302]: Temperature: %d\n", temperature/10);
+	sprintf(buffer, "[AM2302]: Humidity: %d\n[AM2302]: Temperature: %d\n", humidity/10, temperature/10);
 }
 
 static int detect_signal_from_device_and_get_duration(bool expected_signal_state, int timeout_ns)
@@ -155,7 +155,7 @@ static int detect_signal_from_device_and_get_duration(bool expected_signal_state
     return ktime_sub(current_time, start_time);
 }
 
-static int am2302_get_data_from_device(void)
+static u64 am2302_get_data_from_device(void)
 {
     
     int value;
@@ -201,10 +201,8 @@ static int am2302_get_data_from_device(void)
     }
 
     data = data >> 1;
-
-    am2302_format_data(data);
     
-    return 0;
+    return data;
 }
 
 static int am2302_open(struct inode *inode, struct file *file)
@@ -217,8 +215,13 @@ static int am2302_open(struct inode *inode, struct file *file)
 
 static int am2302_read(struct file *file, char __user *user_buffer, size_t size, loff_t *offset)
 {
-    int value;
+    u64 data;
+	char buffer[BUFFER_SIZE] = {};
     pr_debug("[AM2302]: Reading from AM2302...\n");
+
+    if (*offset > 0) {
+        return 0;   //EOF
+    }
 
     if(am2302_init_communication())
     {
@@ -226,20 +229,24 @@ static int am2302_read(struct file *file, char __user *user_buffer, size_t size,
         return 0;
     }
 
-    value = am2302_get_data_from_device();
-    if(value == -EFAULT)
+    data = am2302_get_data_from_device();
+    if(data == -EFAULT)
     {
         pr_err("[AM2302]: Couldn't get data from the device");
         return 0;
     }
 
-    // if(copy_to_user(user_buffer, &value, sizeof(value)))
-    // {
-    //     pr_err("[AM2302]: Couldn't send info to user");
-    //     return 0;
-    // }
+	am2302_format_data(data, buffer);
+
+    if(copy_to_user(user_buffer, buffer, BUFFER_SIZE))
+    {
+        pr_err("[AM2302]: Couldn't send info to user");
+        return 0;
+    }
+
+	*offset += BUFFER_SIZE;
     
-    return 0;
+    return BUFFER_SIZE;
 }
 
 static int am2302_release(struct inode *, struct file *)
